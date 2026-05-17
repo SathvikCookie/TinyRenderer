@@ -42,33 +42,57 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
     }
 }
 
-std::tuple<int, int> project(vec3 v) {
-    return {
-        (v.x + 1.0) * width/2,
-        (v.y + 1.0) * height/2,
-    };
+void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+    // sort the y coordinates in ascending order
+    if (ay > by) {
+        std::swap(ax, bx);
+        std::swap(ay, by);
+    }
+
+    if (ay > cy) {
+        std::swap(ax, cx);
+        std::swap(ay, cy);
+    }
+
+    if (by > cy) {
+        std::swap(bx, cx);
+        std::swap(by, cy);
+    }
+
+    int total_height = cy-ay;
+
+    // loop from bottom to middle, calculate left and right, draw lines in between
+    if (ay != by) {
+        int segment_height = by-ay;
+        for (int y = ay; y <= by; y++) {
+            int x1 = ax + ((cx-ax) * (y-ay) / total_height);
+            int x2 = ax + ((bx - ax) * (y-ay) / segment_height);
+
+            for (int x = std::min(x1, x2); x <= std::max(x1, x2); x++) {
+                framebuffer.set(x, y, color);
+            }
+        }
+    }
+
+    // loop from middle to top, calculate left and right, draw lines in between
+    if (by != cy) {
+        int segment_height = cy-by;
+        for (int y = by; y <= cy; y++) {
+            int x1 = ax + ((cx-ax) * (y-ay) / total_height);
+            int x2 = bx + ((cx - bx) * (y-by) / segment_height);
+
+            for (int x = std::min(x1, x2); x <= std::max(x1, x2); x++) {
+                framebuffer.set(x, y, color);
+            }
+        }
+    }
 }
 
 int main(int argc, char** argv) {
-    Model model(argv[1]);
     TGAImage framebuffer(width, height, TGAImage::RGB);
-
-    for (int i=0; i<model.nfaces(); i++) {
-        auto [ax, ay] = project(model.vert(i, 0));
-        auto [bx, by] = project(model.vert(i, 1));
-        auto [cx, cy] = project(model.vert(i, 2));
-        line(ax, ay, bx, by, framebuffer, red);
-        line(bx, by, cx, cy, framebuffer, red);
-        line(cx, cy, ax, ay, framebuffer, red);
-    }
-
-    for (int i=0; i<model.nverts(); i++) {
-        vec3 v = model.vert(i);
-        auto [x, y] = project(v);
-        framebuffer.set(x, y, white);
-    }
-
+    triangle(  7, 45, 35, 100, 45,  60, framebuffer, red);
+    triangle(120, 35, 90,   5, 45, 110, framebuffer, white);
+    triangle(115, 83, 80,  90, 85, 120, framebuffer, green);
     framebuffer.write_tga_file("framebuffer.tga");
     return 0;
 }
-
