@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <limits>
 #include "geometry.h"
 #include "tgaimage.h"
 #include "model.h"
@@ -42,10 +43,26 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
     }
 }
 
-std::tuple<int, int> project(vec3 v) {
+vec3 rot(vec3 v) {
+    double a = M_PI / 2;
+    mat<3,3> Ry = {{
+        {std::cos(a), 0, std::sin(a)}, 
+        {0, 1, 0}, 
+        {-std::sin(a), 0, std::cos(a)}
+    }};
+    return v*Ry;
+}
+
+vec3 persp(vec3 v) {
+    double c = 3.;
+    return v / (1 - v.z/c);
+}
+
+std::tuple<int, int, double> project(vec3 v) {
     return {
         (v.x + 1.0) * width/2,
         (v.y + 1.0) * height/2,
+        (v.z)
     };
 }
 
@@ -54,12 +71,12 @@ double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
 }
 
 // Bounding Box Rasterization
-void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
+void triangle(int ax, int ay, double az, int bx, int by, double bz, int cx, int cy, double cz, TGAImage &framebuffer, std::vector<double> &zbuffer, TGAColor color) {
     // Find min and max x and y coordinates
-    int minX = std::min(ax, std::min(bx, cx));
-    int minY = std::min(ay, std::min(by, cy));
-    int maxX = std::max(ax, std::max(bx, cx));
-    int maxY = std::max(ay, std::max(by, cy));
+    int minX = std::max(0, std::min(ax, std::min(bx, cx)));
+    int minY = std::max(0, std::min(ay, std::min(by, cy)));
+    int maxX = std::min(width - 1, std::max(ax, std::max(bx, cx)));
+    int maxY = std::min(height - 1, std::max(ay, std::max(by, cy)));
 
     // Calculate barycentric coordinates to determine if pixel is inside the triangle
     double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
@@ -78,44 +95,13 @@ void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuf
             if (alpha < 0 || beta < 0 || gamma < 0) {
                 continue;
             }
+            double z = alpha*az + beta*bz + gamma*cz;
 
-            framebuffer.set(x, y, color);
-        }
-    }
-}
-
-// Gradients with barycentric coordinates
-void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor aColor, TGAColor bColor, TGAColor cColor) {
-    // Find min and max x and y coordinates
-    int minX = std::min(ax, std::min(bx, cx));
-    int minY = std::min(ay, std::min(by, cy));
-    int maxX = std::max(ax, std::max(bx, cx));
-    int maxY = std::max(ay, std::max(by, cy));
-
-    // Calculate barycentric coordinates to determine if pixel is inside the triangle
-    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
-    if (total_area < 1) {
-        return;
-    }
-
-    #pragma omp parallel for
-    for (int x = minX; x <= maxX; x++) {
-        for (int y = minY; y <= maxY; y++) {
-            double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
-            double beta = signed_triangle_area(ax, ay, x, y, cx, cy) / total_area;
-            double gamma = signed_triangle_area(ax, ay, bx, by, x, y) / total_area;
-
-            // Any negative weight indicates the pixel is outside of the triangle
-            if (alpha < 0 || beta < 0 || gamma < 0) {
+            if (z <= zbuffer[x+y*width]) {
                 continue;
             }
-            
-            TGAColor color = {
-                static_cast<unsigned char>(alpha * aColor.bgra[0] + beta * bColor.bgra[0] + gamma * cColor.bgra[0]),
-                static_cast<unsigned char>(alpha * aColor.bgra[1] + beta * bColor.bgra[1] + gamma * cColor.bgra[1]),
-                static_cast<unsigned char>(alpha * aColor.bgra[2] + beta * bColor.bgra[2] + gamma * cColor.bgra[2]),
-                static_cast<unsigned char>(alpha * aColor.bgra[3] + beta * bColor.bgra[3] + gamma * cColor.bgra[3]),
-            };
+
+            zbuffer[x+y*width] = z;
             framebuffer.set(x, y, color);
         }
     }
@@ -123,12 +109,18 @@ void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuf
 
 int main(int argc, char** argv) {
     TGAImage framebuffer(width, height, TGAImage::RGB);
+    std::vector<double> zbuffer(width*height, -std::numeric_limits<double>::max());
+    Model model(argv[1]);
 
-    int ax = 100, ay =  100;
-    int bx = 700, by = 300;
-    int cx = 100, cy = 600;
+    for (int i=0; i<model.nfaces(); i++) {
+        auto [ax, ay, az] = project(persp(rot(model.vert(i, 0))));
+        auto [bx, by, bz] = project(persp(rot(model.vert(i, 1))));
+        auto [cx, cy, cz] = project(persp(rot(model.vert(i, 2))));
 
-    triangle(ax, ay, bx, by, cx, cy, framebuffer, red, blue, green);
+        TGAColor rnd;
+        for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+        triangle(ax, ay, az, bx, by, bz, cx, cy, cz, framebuffer, zbuffer, rnd);
+    }
 
     framebuffer.write_tga_file("framebuffer.tga");
     return 0;
