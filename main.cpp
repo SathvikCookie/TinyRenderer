@@ -42,57 +42,62 @@ void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
     }
 }
 
+std::tuple<int, int> project(vec3 v) {
+    return {
+        (v.x + 1.0) * width/2,
+        (v.y + 1.0) * height/2,
+    };
+}
+
+double signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) {
+    return 0.5 * ((by-ay)*(bx+ax) + (cy-by)*(cx+bx) + (ay-cy)*(ax+cx));
+}
+
+// Bounding Box Rasterization
 void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor color) {
-    // sort the y coordinates in ascending order
-    if (ay > by) {
-        std::swap(ax, bx);
-        std::swap(ay, by);
+    // Find min and max x and y coordinates
+    int minX = std::min(ax, std::min(bx, cx));
+    int minY = std::min(ay, std::min(by, cy));
+    int maxX = std::max(ax, std::max(bx, cx));
+    int maxY = std::max(ay, std::max(by, cy));
+
+    // Calculate barycentric coordinates to determine if pixel is inside the triangle
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    if (total_area < 1) {
+        return;
     }
 
-    if (ay > cy) {
-        std::swap(ax, cx);
-        std::swap(ay, cy);
-    }
+    #pragma omp parallel for
+    for (int x = minX; x <= maxX; x++) {
+        for (int y = minY; y <= maxY; y++) {
+            double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
+            double beta = signed_triangle_area(ax, ay, x, y, cx, cy) / total_area;
+            double gamma = signed_triangle_area(ax, ay, bx, by, x, y) / total_area;
 
-    if (by > cy) {
-        std::swap(bx, cx);
-        std::swap(by, cy);
-    }
-
-    int total_height = cy-ay;
-
-    // loop from bottom to middle, calculate left and right, draw lines in between
-    if (ay != by) {
-        int segment_height = by-ay;
-        for (int y = ay; y <= by; y++) {
-            int x1 = ax + ((cx-ax) * (y-ay) / total_height);
-            int x2 = ax + ((bx - ax) * (y-ay) / segment_height);
-
-            for (int x = std::min(x1, x2); x <= std::max(x1, x2); x++) {
-                framebuffer.set(x, y, color);
+            // Any negative weight indicates the pixel is outside of the triangle
+            if (alpha < 0 || beta < 0 || gamma < 0) {
+                continue;
             }
-        }
-    }
 
-    // loop from middle to top, calculate left and right, draw lines in between
-    if (by != cy) {
-        int segment_height = cy-by;
-        for (int y = by; y <= cy; y++) {
-            int x1 = ax + ((cx-ax) * (y-ay) / total_height);
-            int x2 = bx + ((cx - bx) * (y-by) / segment_height);
-
-            for (int x = std::min(x1, x2); x <= std::max(x1, x2); x++) {
-                framebuffer.set(x, y, color);
-            }
+            framebuffer.set(x, y, color);
         }
     }
 }
 
 int main(int argc, char** argv) {
     TGAImage framebuffer(width, height, TGAImage::RGB);
-    triangle(  7, 45, 35, 100, 45,  60, framebuffer, red);
-    triangle(120, 35, 90,   5, 45, 110, framebuffer, white);
-    triangle(115, 83, 80,  90, 85, 120, framebuffer, green);
+    Model model(argv[1]);
+
+    for (int i=0; i<model.nfaces(); i++) {
+        auto [ax, ay] = project(model.vert(i, 0));
+        auto [bx, by] = project(model.vert(i, 1));
+        auto [cx, cy] = project(model.vert(i, 2));
+
+        TGAColor rnd;
+        for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
+        triangle(ax, ay, bx, by, cx, cy, framebuffer, rnd);
+    }
+
     framebuffer.write_tga_file("framebuffer.tga");
     return 0;
 }
