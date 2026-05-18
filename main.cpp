@@ -84,19 +84,51 @@ void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuf
     }
 }
 
+// Gradients with barycentric coordinates
+void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage &framebuffer, TGAColor aColor, TGAColor bColor, TGAColor cColor) {
+    // Find min and max x and y coordinates
+    int minX = std::min(ax, std::min(bx, cx));
+    int minY = std::min(ay, std::min(by, cy));
+    int maxX = std::max(ax, std::max(bx, cx));
+    int maxY = std::max(ay, std::max(by, cy));
+
+    // Calculate barycentric coordinates to determine if pixel is inside the triangle
+    double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
+    if (total_area < 1) {
+        return;
+    }
+
+    #pragma omp parallel for
+    for (int x = minX; x <= maxX; x++) {
+        for (int y = minY; y <= maxY; y++) {
+            double alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
+            double beta = signed_triangle_area(ax, ay, x, y, cx, cy) / total_area;
+            double gamma = signed_triangle_area(ax, ay, bx, by, x, y) / total_area;
+
+            // Any negative weight indicates the pixel is outside of the triangle
+            if (alpha < 0 || beta < 0 || gamma < 0) {
+                continue;
+            }
+            
+            TGAColor color = {
+                static_cast<unsigned char>(alpha * aColor.bgra[0] + beta * bColor.bgra[0] + gamma * cColor.bgra[0]),
+                static_cast<unsigned char>(alpha * aColor.bgra[1] + beta * bColor.bgra[1] + gamma * cColor.bgra[1]),
+                static_cast<unsigned char>(alpha * aColor.bgra[2] + beta * bColor.bgra[2] + gamma * cColor.bgra[2]),
+                static_cast<unsigned char>(alpha * aColor.bgra[3] + beta * bColor.bgra[3] + gamma * cColor.bgra[3]),
+            };
+            framebuffer.set(x, y, color);
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     TGAImage framebuffer(width, height, TGAImage::RGB);
-    Model model(argv[1]);
 
-    for (int i=0; i<model.nfaces(); i++) {
-        auto [ax, ay] = project(model.vert(i, 0));
-        auto [bx, by] = project(model.vert(i, 1));
-        auto [cx, cy] = project(model.vert(i, 2));
+    int ax = 100, ay =  100;
+    int bx = 700, by = 300;
+    int cx = 100, cy = 600;
 
-        TGAColor rnd;
-        for (int c=0; c<3; c++) rnd[c] = std::rand()%255;
-        triangle(ax, ay, bx, by, cx, cy, framebuffer, rnd);
-    }
+    triangle(ax, ay, bx, by, cx, cy, framebuffer, red, blue, green);
 
     framebuffer.write_tga_file("framebuffer.tga");
     return 0;
