@@ -12,6 +12,8 @@ struct PhongShader : IShader {
     const Model &model;
     vec4 l;
     vec2 varying_uv[3];
+    vec4 varying_norm[3];
+    vec4 tri[3];
 
     PhongShader(const vec3 light, const Model &m) : model(m) {
         l = normalized(ModelView * vec4{light.x, light.y, light.z, 0.0});
@@ -21,13 +23,37 @@ struct PhongShader : IShader {
         vec4 v = model.vert(face, vert);
         vec4 gl_Position = ModelView * vec4{v.x, v.y, v.z, 1.};
         
-        varying_uv[vert] = model.uv(face, vert);;
+        varying_uv[vert] = model.uv(face, vert);
+        varying_norm[vert] = model.normal(face, vert);
+        tri[vert] = gl_Position;
         return Perspective * gl_Position;
     }
 
     virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const {
         vec2 uv = varying_uv[0]*bar[0] + varying_uv[1]*bar[1] + varying_uv[2]*bar[2];
-        vec4 n = normalized(ModelView.invert_transpose() * model.normal(uv));
+
+        // Calculate tangent basis
+        mat<2,4> E = {{
+            {tri[1] - tri[0]}, // e0
+            {tri[2] - tri[0]}  // e1
+        }};
+
+        mat<2,2> U = {{
+            {varying_uv[1] - varying_uv[0]}, // u0
+            {varying_uv[2] - varying_uv[0]}  // u1
+        }};
+
+        mat<2,4> TB = U.invert() * E;
+
+        mat<4,4> TBN = {{
+            {normalized(TB[0])},
+            {normalized(TB[1])},
+            {normalized(varying_norm[0]*bar[0] + varying_norm[1]*bar[1] + varying_norm[2]*bar[2])},
+            {0,0,0,1}
+        }};
+
+        vec4 n = normalized(TBN.transpose() * model.normal(uv));
+
         vec4 r = normalized(2*n*(n*l) - l);
         double ambient = .4;
         double diffuse = 1.*std::max(0., n*l);
@@ -49,7 +75,7 @@ int main(int argc, char** argv) {
 
     constexpr int width  = 800;
     constexpr int height = 800;
-    constexpr vec3 light{ 1, 1, 1};
+    constexpr vec3 light{1, 1, 1};
     constexpr vec3 eye{-1,0,2};
     constexpr vec3 center{0,0,0};
     constexpr vec3 up{0,1,0};
